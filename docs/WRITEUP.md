@@ -1,7 +1,7 @@
 # Roundtable Gem: agents that fail forward
 
 **Track:** PS4, Autonomous Orchestration with Managed Agents. **Stack:** Antigravity agent (`antigravity-preview-09-2026`) through the Gemini Interactions API.
-**Repo:** <<FILL: public repo URL>> **Demo:** <<FILL: live demo URL>>, a replay of a real recorded run (no login, no API quota spent by visitors).
+**Repo:** https://github.com/Morizz00/roundtable-gem **Demo:** https://roundtable-gem.vercel.app, a replay of two real recorded runs (no login, no API quota spent by visitors).
 
 ## 1. What we built
 
