@@ -1,0 +1,16 @@
+# Secrets -- a leaked key gets killed and can disqualify the submission
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Recorded runs: keep curated samples, ignore scratch logs
+runs/*.jsonl
+!runs/sample_*.jsonl
+
+.DS_Store
