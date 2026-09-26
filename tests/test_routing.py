@@ -4,7 +4,7 @@ from app.config import MODEL_LADDER
 from app.ranking_math import bayesian_smooth
 from app.routing import AgentSpec, history_from_runs, pick
 
-CHEAP, STRONG = MODEL_LADDER[0], MODEL_LADDER[-1]
+CHEAP, MID, STRONG = MODEL_LADDER[0], MODEL_LADDER[1], MODEL_LADDER[-1]
 
 
 # ---- ranking math (verbatim lift from RoundtableCI shared/ranking_math.py) -
@@ -29,8 +29,9 @@ def test_first_pick_is_the_cheapest_model():
     assert pick("coding_python") == AgentSpec(role="coder", model=CHEAP)
 
 
-def test_reroute_escalates_after_a_failure():
-    assert pick("coding_python", failed_models=[CHEAP]).model == STRONG
+def test_reroute_climbs_the_ladder_one_rung_per_failure():
+    assert pick("coding_python", failed_models=[CHEAP]).model == MID
+    assert pick("coding_python", failed_models=[CHEAP, MID]).model == STRONG
 
 
 def test_all_candidates_failed_falls_back_to_strongest_instead_of_dying():
@@ -61,12 +62,13 @@ def test_smoothing_stops_a_tiny_lucky_sample_from_winning():
 
 def test_history_ties_break_by_ascending_model_name():
     history = {"coding_python": {CHEAP: (0.5, 10), STRONG: (0.5, 10)}}
-    assert pick("coding_python", history=history).model == min(CHEAP, STRONG)
+    assert pick("coding_python", history=history).model == min(MODEL_LADDER)  # the untested middle rung ties at the 0.5 prior
 
 
 def test_history_still_excludes_failed_models():
     history = {"coding_python": {STRONG: (1.0, 30), CHEAP: (0.2, 30)}}
-    assert pick("coding_python", failed_models=[STRONG], history=history).model == CHEAP
+    assert pick("coding_python", failed_models=[STRONG], history=history).model == MID  # untested prior 0.5 beats CHEAP's 0.3
+    assert pick("coding_python", failed_models=[STRONG, MID], history=history).model == CHEAP
 
 
 def test_history_for_another_category_is_ignored():
@@ -103,3 +105,26 @@ def test_history_from_runs_tallies_verdicts(tmp_path):
 
 def test_history_from_runs_on_empty_dir_is_empty(tmp_path):
     assert history_from_runs(tmp_path) == {}
+
+
+def test_history_credits_the_judged_model_not_the_critic(tmp_path):
+    critic = "gemini-3.8-flash"
+    lines = [
+        json.dumps({"kind": "verdict", "model": critic, "payload": {"category": "coding_python", "passed": False, "subject_model": CHEAP}}),
+        json.dumps({"kind": "verdict", "model": critic, "payload": {"category": "coding_python", "passed": True, "subject_model": STRONG}}),
+    ]
+    (tmp_path / "real.jsonl").write_text("\n".join(lines), encoding="utf-8")
+    assert history_from_runs(tmp_path) == {"coding_python": {CHEAP: (0.0, 1), STRONG: (1.0, 1)}}
+
+
+def test_history_never_counts_synthetic_fixture_runs(tmp_path):
+    start = json.dumps({"kind": "run_started", "payload": {"fixture": True}})
+    (tmp_path / "sample_fixture.jsonl").write_text("\n".join([start, _verdict(CHEAP, "coding_python", False)]), encoding="utf-8")
+    (tmp_path / "real.jsonl").write_text(_verdict(STRONG, "coding_python", True), encoding="utf-8")
+    assert history_from_runs(tmp_path) == {"coding_python": {STRONG: (1.0, 1)}}
+
+
+def test_a_real_run_started_event_without_the_fixture_flag_still_counts(tmp_path):
+    start = json.dumps({"kind": "run_started", "payload": {"task": "x"}})
+    (tmp_path / "real.jsonl").write_text("\n".join([start, _verdict(CHEAP, "coding_python", True)]), encoding="utf-8")
+    assert history_from_runs(tmp_path) == {"coding_python": {CHEAP: (1.0, 1)}}

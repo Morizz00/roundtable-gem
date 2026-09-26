@@ -13,6 +13,7 @@ forked and no git history, config, or `.env` was carried over.
 | `app/routing.py` | `sage-service/app/services/query_routing_service.py` (policy shape) | Category -> ranked candidates, Bayesian-smoothed ranking, ascending-name tie-break, fallback. Ranking *data* is not ported: candidates are Gemini models only, "races" are critic verdicts in `runs/*.jsonl`. |
 | `app/state_log.py` | `engineer_runtime.py` (`MissionEvent`/`MissionResult`), `workflow_event_bus.py` (in-process fallback: backlog + subscribers + seq), `reflection_observation_layer.py` (`emit_observation` event shape) | No Redis; single process. Adds JSONL persistence + replay. |
 | `app/config.py` | `engineer_runtime.py` (`MissionRuntimeConfig`) | Budget *shape* only; mapped onto Interactions API limits. |
+| `app/keys.py` | The key-pool idea in `krennic/key_pool.py` (adapted from PrepHelp's key balancer; see `API_KEY_LOADBALANCER.md`) | Much simpler: a dedicated key per role plus spares to fail over to. **Not ported:** sliding-window RPM tracking, Redis-persisted cooldowns, round-robin across a shared pool. |
 
 ## Ideas carried over (no code)
 

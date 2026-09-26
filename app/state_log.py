@@ -15,6 +15,21 @@ Lineage (RoundtableCI):
 
 Like the source it mirrors, recording never raises: a JSONL write failure or an
 unknown event kind degrades to a logged warning, never a broken run.
+
+Payload conventions (the UI in ui/index.html and the orchestrator both rely on
+these; extra keys are fine, missing ones are tolerated):
+    run_started    {task, category, budget, fixture?}   fixture=true marks synthetic data
+    step_started   {title}
+    agent_call     {prompt}
+    agent_result   {status, tokens, elapsed_s, output, key?, error?}   key = non-secret label (k1..) of the API key used
+    tool_called    {tool, arguments}
+    tool_returned  {tool, result}
+    verdict        {passed, reasons[], failing_tests[], category}
+    reflection     {summary}
+    reroute        {from_model, to_model, modified_subtask}
+    step_succeeded {attempts}
+    step_failed    {reason}
+    run_finished   {succeeded, steps_total, steps_succeeded, attempts_used}
 """
 from __future__ import annotations
 
@@ -52,6 +67,11 @@ KINDS = frozenset(
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
+def is_valid_run_id(run_id: object) -> bool:
+    """Run ids can arrive from URLs, so they are validated before touching disk."""
+    return isinstance(run_id, str) and _RUN_ID_RE.match(run_id) is not None
+
+
 def new_run_id() -> str:
     return time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
 
@@ -85,8 +105,7 @@ class StateLog:
     """
 
     def __init__(self, run_id: str, runs_dir: Optional[Path] = None, persist: bool = True):
-        if not isinstance(run_id, str) or not _RUN_ID_RE.match(run_id):
-            # run_id can arrive from a URL, so it must never reach the filesystem unchecked
+        if not is_valid_run_id(run_id):
             raise ValueError(f"invalid run_id {run_id!r}: expected 1-64 chars of [A-Za-z0-9_-]")
         self.run_id = run_id
         self._events: List[StepEvent] = []
@@ -198,3 +217,18 @@ class StateLog:
                 logger.warning("state_log: skipping malformed line in %s: %s", p, e)
         log._closed = True
         return log
+
+
+# Logs of runs in this process, by run_id. The orchestrator registers each new
+# log so GET /stream/{run_id} can serve a run that is still in flight; finished
+# runs are also on disk, so this is only ever the fast path.
+ACTIVE_LOGS: Dict[str, StateLog] = {}
+
+
+def register_log(log: StateLog) -> StateLog:
+    ACTIVE_LOGS[log.run_id] = log
+    return log
+
+
+def get_active_log(run_id: str) -> Optional[StateLog]:
+    return ACTIVE_LOGS.get(run_id)

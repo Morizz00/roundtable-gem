@@ -19,10 +19,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import json
 import sys
+import tarfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -56,8 +61,30 @@ def make_client() -> Any:
     return genai.Client(api_key=key)
 
 
+STRONG = MODEL_LADDER[-1]
+TIMINGS: List[Dict[str, Any]] = []  # one row per successful call: wall seconds + total tokens
+
+
+def _timed(kind: str, **kwargs: Any) -> Any:
+    client = kwargs.pop("_client")
+    t0 = time.monotonic()
+    result = client.interactions.create(**kwargs)
+    usage = getattr(result, "usage", None)
+    TIMINGS.append({
+        "call": len(TIMINGS) + 1, "kind": kind, "seconds": round(time.monotonic() - t0, 1),
+        "tokens": getattr(usage, "total_tokens", None) if usage is not None else None,
+    })
+    return result
+
+
 def create(client: Any, **kwargs: Any) -> Any:
-    return client.interactions.create(agent=AGENT_ID, **kwargs)
+    """An Antigravity agent interaction."""
+    return _timed("agent", _client=client, agent=AGENT_ID, **kwargs)
+
+
+def create_model(client: Any, model: str, **kwargs: Any) -> Any:
+    """A plain-model interaction (no sandbox) on the same Interactions API."""
+    return _timed("model", _client=client, model=model, **kwargs)
 
 
 def summarize(label: str, interaction: Any) -> None:
@@ -213,20 +240,233 @@ def check_env_reuse(client: Any) -> str:
     return "none"
 
 
+# ---------------------------------------------------------------- check 4
+# The four questions the wiring plan depends on (see the plan file, step A0).
+
+TEST_SRC = (
+    "import unittest\n"
+    "from solution import add\n\n"
+    "class T(unittest.TestCase):\n"
+    "    def test_add_positive(self):\n"
+    "        self.assertEqual(add(2, 3), 5)\n\n"
+    "    def test_negative_rejected(self):\n"
+    "        with self.assertRaises(ValueError):\n"
+    "            add(-1, 3)\n\n"
+    "if __name__ == '__main__':\n"
+    "    unittest.main()\n"
+)
+
+
+def check_snapshot(client: Any) -> bool:
+    """4a: can we pull a file the agent wrote out of its environment, safely, as a tar?"""
+    print("\n== 4a. environment snapshot download ==")
+    try:
+        w = create(
+            client,
+            input="Use code execution to create /workspace/hello.py containing print('hi') and "
+                  "/workspace/notes/out.txt containing the single word banana. Reply 'done'.",
+            environment="remote",
+            agent_config=AGENT_CFG,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"  writer failed: {type(e).__name__}: {str(e)[:400]}")
+        return False
+    summarize("writer", w)
+    env_id = getattr(w, "environment_id", None)
+    if not env_id:
+        print("  FAIL: no environment_id")
+        return False
+    try:
+        r = httpx.get(
+            f"https://generativelanguage.googleapis.com/v1beta/files/environment-{env_id}:download",
+            params={"alt": "media"}, headers={"x-goog-api-key": api_key() or ""},
+            follow_redirects=True, timeout=60,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"  download failed: {type(e).__name__}: {str(e)[:300]}")
+        return False
+    print(f"  http {r.status_code} content-type={r.headers.get('content-type')!r} bytes={len(r.content)}")
+    if r.status_code != 200:
+        print(f"  body head: {r.content[:300]!r}")
+        return False
+    try:
+        with tarfile.open(fileobj=io.BytesIO(r.content)) as tar:
+            members = tar.getmembers()
+            names = [m.name for m in members]
+            print(f"  tar has {len(members)} members; symlinks={sum(m.issym() or m.islnk() for m in members)}; "
+                  f"absolute={sum(n.startswith('/') for n in names)}; dotdot={sum('..' in n.split('/') for n in names)}")
+            interesting = [n for n in names if any(k in n for k in ("hello", "out.txt", "workspace"))]
+            print(f"  relevant members: {interesting[:30]}")
+            found = {}
+            for m in members:
+                if m.isfile() and m.name.endswith(("hello.py", "out.txt")):
+                    found[m.name] = (tar.extractfile(m).read() or b"").decode("utf-8", "replace")[:80]
+            print(f"  file contents: {found}")
+            ok = any("banana" in v for v in found.values())
+    except tarfile.TarError as e:
+        print(f"  not a readable tar: {e}; head={r.content[:120]!r}")
+        return False
+    print(f"  {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
+def check_critic_pattern(client: Any) -> bool:
+    """4b: fresh sandbox + inline sources + code_execution AND a custom function tool together."""
+    print("\n== 4b. critic pattern: inline sources + code_execution + submit_verdict ==")
+    captured: Dict[str, Any] = {}
+
+    async def submit_verdict(args: Dict[str, Any], ctx: ToolContext) -> str:
+        captured.update(args)
+        return "verdict recorded"
+
+    reg = ToolRegistry()
+    reg.register(
+        "submit_verdict", "Submit your final pass/fail verdict.",
+        {"type": "object", "properties": {
+            "passed": {"type": "boolean"},
+            "reasons": {"type": "array", "items": {"type": "string"}},
+            "failing_tests": {"type": "array", "items": {"type": "string"}}},
+         "required": ["passed", "reasons", "failing_tests"]},
+        submit_verdict,
+    )
+    sources = [
+        {"type": "inline", "target": "/workspace/solution.py", "content": "def add(a, b):\n    return a + b\n"},
+        {"type": "inline", "target": "/workspace/test_hidden.py", "content": TEST_SRC},
+    ]
+    try:
+        i = create(
+            client,
+            input="You are a strict reviewer. In /workspace, run `python -m unittest test_hidden -v` with code "
+                  "execution. Then call submit_verdict: passed=true only if every test passed, otherwise "
+                  "passed=false with the failing test names.",
+            environment={"type": "remote", "sources": sources},
+            tools=[{"type": "code_execution"}] + reg.interactions_tools_schema(),
+            agent_config=AGENT_CFG,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"  create failed: {type(e).__name__}: {str(e)[:500]}")
+        return False
+    summarize("critic", i)
+    calls = function_calls(i)
+    if getattr(i, "status", None) != "requires_action" or not calls:
+        print(f"  no function call; steps={dump(getattr(i, 'steps', None), 1500)}")
+        return False
+    step = calls[0]
+    result = asyncio.run(reg.call(getattr(step, "name", ""), getattr(step, "arguments", None) or {},
+                                  ToolContext(workspace_root=Path("."))))
+    print(f"  verdict captured: {json.dumps(captured)} -> tool result {result!r}")
+    try:
+        final = create(
+            client, previous_interaction_id=i.id,
+            environment=getattr(i, "environment_id", None) or "remote",
+            input=[{"type": "function_result", "name": step.name, "call_id": step.id, "result": {"status": result}}],
+        )
+        summarize("critic-final", final)
+    except Exception as e:  # noqa: BLE001
+        print(f"  function_result follow-up failed: {type(e).__name__}: {str(e)[:400]}")
+        return False
+    ok = captured.get("passed") is False and any("negative" in t for t in captured.get("failing_tests", []))
+    print(f"  {'PASS' if ok else 'FAIL'} (expected passed=false with test_negative_rejected failing)")
+    return ok
+
+
+def check_model_swap(client: Any) -> Dict[str, Optional[bool]]:
+    """4c: escalate models: same env with a different model, and chained with previous_interaction_id."""
+    print(f"\n== 4c. model swap ({MODEL_LADDER[0]} -> {STRONG}) ==")
+    out: Dict[str, Optional[bool]] = {"env_swap": None, "chain_swap": None}
+    try:
+        w = create(client, input="Use code execution to write the single word mango to /workspace/swap.txt. Reply 'done'.",
+                   environment="remote", agent_config=AGENT_CFG)
+    except Exception as e:  # noqa: BLE001
+        print(f"  writer failed: {type(e).__name__}: {str(e)[:400]}")
+        return out
+    env_id = getattr(w, "environment_id", None)
+    strong_cfg = {**AGENT_CFG, "model": STRONG}
+    read = "Read /workspace/swap.txt with code execution and reply with its exact contents only."
+    try:
+        r = create(client, input=read, environment=env_id or "remote", agent_config=strong_cfg)
+        summarize("env-swap", r)
+        out["env_swap"] = "mango" in (getattr(r, "output_text", "") or "")
+    except Exception as e:  # noqa: BLE001
+        print(f"  env-swap failed: {type(e).__name__}: {str(e)[:400]}")
+        out["env_swap"] = False
+    try:
+        c = create(client, previous_interaction_id=w.id, environment=env_id or "remote",
+                   input="Which word did you write to swap.txt? Reply with the word only.", agent_config=strong_cfg)
+        summarize("chain-swap", c)
+        out["chain_swap"] = "mango" in (getattr(c, "output_text", "") or "")
+    except Exception as e:  # noqa: BLE001
+        print(f"  chain-swap failed: {type(e).__name__}: {str(e)[:400]}")
+        out["chain_swap"] = False
+    print(f"  env_swap={out['env_swap']} chain_swap={out['chain_swap']}")
+    return out
+
+
+def check_structured(client: Any) -> Dict[str, Optional[bool]]:
+    """4d: plain model + response_format (nested schema) + previous_interaction_id chaining."""
+    print("\n== 4d. structured output on a plain model, chained ==")
+    from pydantic import BaseModel
+
+    class Step(BaseModel):
+        title: str
+        instruction: str
+        acceptance: str
+        modifies_code: bool
+
+    class Plan(BaseModel):
+        steps: List[Step]
+
+    fmt = {"type": "text", "mime_type": "application/json", "schema": Plan.model_json_schema()}
+    out: Dict[str, Optional[bool]] = {"structured": None, "chained": None}
+    try:
+        i1 = create_model(client, STRONG, response_format=fmt,
+                          input="Plan 3 steps to fix a Python script that crashes on empty input, then add a regression test.")
+        summarize("plan", i1)
+        plan = Plan.model_validate_json(i1.output_text)
+        out["structured"] = 2 <= len(plan.steps) <= 5
+        print(f"  parsed {len(plan.steps)} steps: {[s.title for s in plan.steps]}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  structured call failed: {type(e).__name__}: {str(e)[:500]}")
+        out["structured"] = False
+        return out
+    try:
+        i2 = create_model(client, STRONG, response_format=fmt, previous_interaction_id=i1.id,
+                          input="Rewrite the plan so the second step's instruction is more specific.")
+        summarize("plan-v2", i2)
+        Plan.model_validate_json(i2.output_text)
+        out["chained"] = True
+    except Exception as e:  # noqa: BLE001
+        print(f"  chained call failed: {type(e).__name__}: {str(e)[:500]}")
+        out["chained"] = False
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--only", type=int, choices=(1, 2, 3), help="run a single check")
+    parser.add_argument("--only", type=str, choices=("1", "2", "3", "4", "4a", "4b", "4c", "4d"), help="run one check")
     args = parser.parse_args()
+    want = lambda n: args.only is None or args.only == n or (n.startswith("4") and args.only == "4")  # noqa: E731
 
     client = make_client()
     summary: Dict[str, Any] = {}
-    if args.only in (None, 1):
+    if want("1"):
         summary["basic_ok"] = check_basic(client)
-    if args.only in (None, 2):
+    if want("2"):
         summary["schema_style"] = check_function_roundtrip(client)
-    if args.only in (None, 3):
+    if want("3"):
         summary["env_handoff"] = check_env_reuse(client)
+    if want("4a"):
+        summary["snapshot_ok"] = check_snapshot(client)
+    if want("4b"):
+        summary["critic_pattern_ok"] = check_critic_pattern(client)
+    if want("4c"):
+        summary["model_swap"] = check_model_swap(client)
+    if want("4d"):
+        summary["structured"] = check_structured(client)
 
+    print("\n== call timings ==")
+    for row in TIMINGS:
+        print(f"  #{row['call']} {row['kind']:<5} {row['seconds']:>6}s  tokens={row['tokens']}")
     print("\n== summary (set these in the code) ==")
     print(json.dumps(summary, indent=2))
     if summary.get("schema_style") == "nested":

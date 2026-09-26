@@ -12,7 +12,7 @@ Changes from the original:
   API's function-tool shape. The Gemini docs disagree on it (one page shows the
   flat {"type","name","description","parameters"}, another the OpenAI-style
   nested {"type","function":{...}}), so the shape lives in exactly one place --
-  SCHEMA_STYLE -- and scripts/smoke_test.py settles which one is right.
+  SCHEMA_STYLE. Verified against the live API (2026-09-26): flat works.
 
 Contract kept as-is: call() NEVER raises. An unknown tool, malformed
 arguments, or a handler exception all degrade to an "error: ..." string that

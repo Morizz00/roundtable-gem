@@ -1,0 +1,8 @@
+warehouse,sku,quantity,unit_price
+North,A100,10,2.50
+North,A200,5,4.00
+South,B100,N/A,3.00
+South,B200,-4,1.25
+East,C100,abc,9.99
+South,B300,8,1.10
+North,A100,3,2.50

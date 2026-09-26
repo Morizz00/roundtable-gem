@@ -12,5 +12,6 @@ __pycache__/
 # Recorded runs: keep curated samples, ignore scratch logs
 runs/*.jsonl
 !runs/sample_*.jsonl
+!runs/recorded_*.jsonl
 
 .DS_Store

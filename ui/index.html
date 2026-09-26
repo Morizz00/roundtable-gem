@@ -3,21 +3,604 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>roundtable-gem</title>
+  <title>Roundtable Gem</title>
+  <meta name="description" content="Managed agents that plan, delegate, fail, reroute and recover, on the Antigravity agent via the Interactions API.">
   <style>
-    :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#8a9099; --line:#232830; }
-    body { margin:0; background:var(--bg); color:var(--fg);
-           font:15px/1.5 system-ui, sans-serif; display:grid; place-items:center; min-height:100vh; }
-    main { max-width:32rem; padding:0 16px; }
-    h1 { font-weight:500; margin:0 0 .5rem; }
-    p { color:var(--muted); margin:.25rem 0; }
-    code { border:1px solid var(--line); border-radius:4px; padding:1px 6px; }
+    /* Visual language ported from RoundtableCI's workflow-cp (obsidian palette, glass panels,
+       celestial arc, flowing connectors) + a Gemini-gradient accent. Antigravity motif:
+       failure falls (gravity), recovery lifts (anti-gravity). */
+    :root {
+      --radius: 0.875rem;
+      --bg: oklch(0.13 0.008 250);
+      --fg: oklch(0.92 0.005 250);
+      --card: oklch(0.16 0.008 250);
+      --muted: oklch(0.6 0.012 250);
+      --panel-border: oklch(0.32 0.012 250 / 0.45);
+      --hairline: oklch(0.4 0.015 250 / 0.25);
+      --info: oklch(0.82 0.09 240);
+      --ok: oklch(0.8 0.14 155);
+      --bad: oklch(0.7 0.19 25);
+      --warn: oklch(0.83 0.13 80);
+      --g1: oklch(0.7 0.15 280);
+      --g2: oklch(0.75 0.14 320);
+      --g3: oklch(0.72 0.13 30);
+      --gemini: linear-gradient(100deg, var(--g1), var(--g2) 55%, var(--g3));
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; border-color: var(--panel-border); }
+    html, body { margin: 0; min-height: 100vh; }
+    body {
+      color: var(--fg);
+      font: 14px/1.5 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      background:
+        radial-gradient(ellipse 1400px 700px at 50% -10%, oklch(0.22 0.015 250 / 0.55), transparent 60%),
+        radial-gradient(ellipse 900px 500px at 50% 110%, oklch(0.2 0.012 250 / 0.4), transparent 60%),
+        linear-gradient(180deg, oklch(0.11 0.008 250), oklch(0.13 0.008 250) 50%, oklch(0.1 0.008 250));
+      background-attachment: fixed;
+      overflow-x: hidden;
+    }
+    button, select { font: inherit; color: inherit; }
+    :focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+
+    /* ---- backdrop ---- */
+    .star-field { position: fixed; inset: 0; pointer-events: none; opacity: .6;
+      background-image:
+        radial-gradient(1px 1px at 20% 30%, oklch(0.95 0 0 / 0.5), transparent 50%),
+        radial-gradient(1px 1px at 70% 20%, oklch(0.9 0 0 / 0.4), transparent 50%),
+        radial-gradient(1px 1px at 40% 70%, oklch(0.95 0 0 / 0.35), transparent 50%),
+        radial-gradient(1px 1px at 85% 60%, oklch(0.9 0 0 / 0.45), transparent 50%),
+        radial-gradient(1px 1px at 15% 85%, oklch(0.95 0 0 / 0.3), transparent 50%),
+        radial-gradient(1px 1px at 60% 45%, oklch(0.9 0 0 / 0.35), transparent 50%),
+        radial-gradient(1px 1px at 92% 15%, oklch(0.95 0 0 / 0.4), transparent 50%),
+        radial-gradient(1px 1px at 8% 50%, oklch(0.9 0 0 / 0.3), transparent 50%); }
+    .arc { position: fixed; inset: 0 0 auto 0; display: flex; justify-content: center; pointer-events: none; z-index: 0; }
+    .arc svg { width: 180vw; max-width: none; transform: translateY(-8%); }
+    .halo { position: fixed; top: -30vh; left: 50%; width: 90vw; height: 60vh; transform: translateX(-50%);
+      pointer-events: none; background: radial-gradient(closest-side, oklch(0.5 0.12 285 / 0.16), transparent); }
+
+    /* ---- shell ---- */
+    header { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 20px 24px 0; max-width: 1480px; margin: 0 auto; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand svg { width: 26px; height: 26px; }
+    .brand h1 { margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -0.01em; }
+    .brand h1 .gem { background: var(--gemini); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .sub { position: relative; z-index: 2; text-align: center; margin: 18px 16px 0; }
+    .label { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: oklch(0.62 0.015 250); font-weight: 500; }
+    .sub p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+    .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+      border: 1px solid var(--panel-border); background: oklch(0.16 0.008 250 / 0.5); font-size: 12px; white-space: nowrap; }
+    .pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+    .pill[data-s=replay] i, .pill[data-s=live] i { background: var(--info); box-shadow: 0 0 8px 2px oklch(0.82 0.09 240 / .4); animation: pulse 2.4s ease-in-out infinite; }
+    .pill[data-s=ok] i { background: var(--ok); } .pill[data-s=bad] i { background: var(--bad); } .pill[data-s=err] i { background: var(--warn); }
+
+    main { position: relative; z-index: 1; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 24px;
+      max-width: 1480px; margin: 32px auto 0; padding: 0 24px 40px; }
+    .panel { background: linear-gradient(180deg, oklch(0.18 0.01 250 / 0.55), oklch(0.14 0.008 250 / 0.7));
+      border: 1px solid var(--panel-border); border-radius: 1rem; backdrop-filter: blur(20px) saturate(120%);
+      -webkit-backdrop-filter: blur(20px) saturate(120%);
+      box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.04), 0 30px 60px -30px oklch(0 0 0 / 0.6); }
+    .inset { background: linear-gradient(180deg, oklch(0.19 0.01 250 / 0.6), oklch(0.16 0.008 250 / 0.5));
+      border: 1px solid oklch(0.3 0.012 250 / 0.35); border-radius: .75rem; padding: 14px; }
+    aside { display: flex; flex-direction: column; gap: 26px; padding: 20px; align-self: start; }
+    aside h2 { margin: 0 0 10px; }
+    .stack { display: flex; flex-direction: column; gap: 8px; }
+    .chip { display: inline-flex; align-items: center; gap: 8px; width: fit-content; padding: 4px 10px; border-radius: 8px;
+      border: 1px solid oklch(0.32 0.012 250 / 0.6); background: oklch(0.16 0.008 250 / 0.4); font-size: 12px; }
+    .task { margin: 0; color: oklch(0.92 0.005 250 / .88); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+    .kv { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); }
+    .kv b { color: var(--fg); font-weight: 500; }
+    .agent-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px;
+      border: 1px solid oklch(0.32 0.012 250 / 0.5); background: oklch(0.16 0.008 250 / 0.4); font-size: 12.5px; }
+    .agent-row .mk { width: 18px; height: 18px; flex: none; }
+    .agent-row .mk svg { width: 100%; height: 100%; display: block; }
+    .agent-row .who { flex: 1; min-width: 0; }
+    .agent-row .who small { display: block; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: oklch(0.4 0.01 250); flex: none; }
+    [data-state=working] > .dot, .agent-row[data-state=working] .dot { background: var(--info); animation: pulse 1.4s ease-in-out infinite; }
+    .agent-row[data-state=pass] .dot { background: var(--ok); } .agent-row[data-state=fail] .dot { background: var(--bad); }
+    .controls { display: flex; flex-direction: column; gap: 8px; }
+    .controls select, .btn { width: 100%; padding: 9px 12px; border-radius: 8px; border: 1px solid oklch(0.32 0.012 250 / 0.6);
+      background: oklch(0.16 0.008 250 / 0.55); cursor: pointer; text-align: left; }
+    .btn:hover, .controls select:hover { border-color: oklch(0.45 0.02 250 / .7); background: oklch(0.2 0.01 250 / .6); }
+    .btn.primary { background: linear-gradient(180deg, oklch(0.97 0 0 / .95), oklch(0.85 0 0 / .78)); color: var(--bg); font-weight: 500;
+      text-align: center; box-shadow: 0 0 24px -4px oklch(0.85 0.06 285 / .55); }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    section.col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+    .banner { display: none; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 12px; font-size: 12.5px;
+      border: 1px solid oklch(0.83 0.13 80 / .35); background: oklch(0.83 0.13 80 / .08); color: var(--warn); }
+    .banner.show { display: flex; }
+
+    /* ---- orchestration graph ---- */
+    .stage-head { display: flex; align-items: center; justify-content: space-between; padding: 22px 28px 0; gap: 12px; flex-wrap: wrap; }
+    .stage-head h2 { margin: 0; font-size: 14px; font-weight: 500; }
+    .legend { display: flex; gap: 14px; color: var(--muted); font-size: 11.5px; flex-wrap: wrap; }
+    .legend span::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: var(--c); }
+    .recoveries { display: flex; flex-direction: column; gap: 8px; padding: 14px 28px 0; }
+    .recovery { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; padding: 10px 14px; border-radius: 12px; font-size: 12.5px;
+      border: 1px solid oklch(0.8 0.14 155 / .35); background: linear-gradient(90deg, oklch(0.8 0.14 155 / .10), transparent);
+      animation: rise .7s cubic-bezier(.2,.8,.2,1) both; }
+    .recovery b { color: var(--ok); font-weight: 600; }
+    .recovery code, .mono { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 11.5px; }
+    .recovery .bad { color: var(--bad); } .recovery .good { color: var(--ok); } .recovery .arrow { color: var(--warn); }
+    .graph { position: relative; height: 400px; padding: 0 24px; margin-top: 4px; }
+    .graph svg.edges { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .conn .base { stroke: oklch(0.7 0.02 240); stroke-opacity: .26; stroke-width: 1; stroke-dasharray: 2 6; fill: none; }
+    .conn .flow { stroke: oklch(0.95 0.02 240); stroke-opacity: .55; stroke-width: 1.2; stroke-dasharray: 1 5; fill: none;
+      animation: flow 8s linear infinite; transition: stroke .4s, stroke-opacity .4s, stroke-width .4s; }
+    .conn.hot .flow { stroke: var(--c); stroke-opacity: 1; stroke-width: 2.2; stroke-dasharray: 5 6; animation-duration: 1.2s; }
+    .node { position: absolute; width: 190px; transform: translate(-50%, -32px); text-align: center; }
+    .lift { transform: translateY(var(--dy, 0px)); transition: transform .7s cubic-bezier(.2, .8, .2, 1); }
+    .node[data-state=working] { --dy: -12px; }
+    .node[data-state=pass] { --dy: -5px; }
+    .node[data-state=fail] { --dy: 16px; }
+    .node[data-state=fail] .lift { transition: transform .5s cubic-bezier(.6, 0, 1, .5); } /* accelerates: gravity */
+    .disc { width: 64px; height: 64px; margin: 0 auto; border-radius: 50%; display: grid; place-items: center;
+      background: oklch(0.18 0.01 250); animation: drift 6s ease-in-out infinite; transition: box-shadow .5s;
+      box-shadow: 0 0 0 1px oklch(0.5 0.02 250 / .35), 0 0 40px -8px oklch(0.7 0.05 240 / .35), inset 0 1px 0 oklch(1 0 0 / .08); }
+    .disc svg { width: 40px; height: 40px; display: block; }
+    .node[data-state=working] .disc { box-shadow: 0 0 0 1px oklch(0.82 0.09 240 / .6), 0 0 50px -2px oklch(0.75 0.14 285 / .65), inset 0 1px 0 oklch(1 0 0 / .1); }
+    .node[data-state=pass] .disc { box-shadow: 0 0 0 1px oklch(0.8 0.14 155 / .6), 0 0 40px -4px oklch(0.8 0.14 155 / .45); }
+    .node[data-state=fail] .disc { animation: shake .5s .45s both; box-shadow: 0 0 0 1px oklch(0.7 0.19 25 / .7), 0 0 44px -4px oklch(0.7 0.19 25 / .55); }
+    .node .role { margin-top: 10px; font-size: 12.5px; font-weight: 500; }
+    .node .chip { margin-top: 6px; max-width: 100%; }
+    .node .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .note { margin-top: 8px; min-height: 1.4em; font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+    .note.warn { color: var(--warn); } .note.good { color: var(--ok); } .note.bad { color: var(--bad); }
+
+    /* ---- timeline ---- */
+    .tl-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 24px 12px; gap: 12px; flex-wrap: wrap; }
+    .tl-head h2 { margin: 0; font-size: 14px; font-weight: 500; }
+    .stats { display: flex; gap: 16px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+    .stats b { color: var(--fg); font-weight: 500; }
+    ol.log { list-style: none; margin: 0; padding: 0 8px 8px; max-height: 46vh; overflow: auto; }
+    ol.log:empty::before { content: "No events yet."; display: block; padding: 24px 16px; color: var(--muted); }
+    .step-head { margin: 14px 8px 4px; padding-top: 12px; border-top: 1px solid oklch(0.4 0.015 250 / .2); font-size: 12px; color: var(--muted); }
+    .step-head:first-child { border-top: 0; margin-top: 4px; }
+    .step-head b { color: var(--fg); font-weight: 500; }
+    .ev { display: grid; grid-template-columns: 2rem 4rem 7.2rem minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 7px 10px;
+      border-radius: 8px; cursor: pointer; font-size: 12.5px; animation: rise .5s cubic-bezier(.2,.8,.2,1) both; }
+    .ev:hover { background: oklch(0.2 0.01 250 / .5); }
+    .ev .seq, .ev .t { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+    .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 10.5px; letter-spacing: .04em; text-align: center;
+      border: 1px solid color-mix(in oklch, var(--c, var(--muted)) 45%, transparent); color: var(--c, var(--muted));
+      background: color-mix(in oklch, var(--c, var(--muted)) 10%, transparent); }
+    .ev .body { min-width: 0; }
+    .ev .who { display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; color: var(--muted); font-size: 11.5px; }
+    .ev .who svg { width: 14px; height: 14px; }
+    .ev .att { color: var(--muted); font-size: 11px; margin-right: 6px; }
+    .ev .sum { overflow-wrap: anywhere; }
+    .ev.fail { background: oklch(0.7 0.19 25 / .07); } .ev.pass { background: oklch(0.8 0.14 155 / .06); } .ev.reroute { background: oklch(0.83 0.13 80 / .07); }
+    .ev pre { display: none; grid-column: 1 / -1; margin: 6px 0 2px; padding: 10px 12px; border-radius: 8px; overflow: auto; max-height: 240px;
+      background: oklch(0.11 0.008 250 / .8); border: 1px solid oklch(0.3 0.012 250 / .35); font-size: 11.5px; line-height: 1.5; }
+    .ev.open pre { display: block; }
+
+    @keyframes flow { to { stroke-dashoffset: -24; } }
+    @keyframes drift { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+    @keyframes pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+    @keyframes shake { 0%, 100% { translate: 0 0; } 20% { translate: -4px 0; } 40% { translate: 4px 0; } 60% { translate: -3px 0; } 80% { translate: 3px 0; } }
+    @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+    @media (max-width: 960px) {
+      main { grid-template-columns: 1fr; padding: 0 16px 32px; margin-top: 24px; }
+      header { padding: 16px 16px 0; }
+      .graph { height: 440px; padding: 0; }
+      .node { width: 130px; }
+      .ev { grid-template-columns: 1.6rem 3.4rem minmax(0, 1fr); }
+      .ev .badge { grid-column: 3; justify-self: start; }
+      .ev .body { grid-column: 1 / -1; }
+      .stage-head, .recoveries { padding-left: 16px; padding-right: 16px; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
   </style>
 </head>
 <body>
+  <!-- shared gradient defs for the marks (kept off display:none so gradients resolve) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="g-gemini" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" style="stop-color: oklch(0.7 0.15 280)"/><stop offset="50%" style="stop-color: oklch(0.75 0.14 320)"/><stop offset="100%" style="stop-color: oklch(0.72 0.13 30)"/>
+      </linearGradient>
+      <linearGradient id="g-agy" x1="0" y1="1" x2="1" y2="0">
+        <stop offset="0%" style="stop-color: oklch(0.78 0.12 235)"/><stop offset="100%" style="stop-color: oklch(0.8 0.13 300)"/>
+      </linearGradient>
+      <linearGradient id="g-gemma" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" style="stop-color: oklch(0.82 0.11 195)"/><stop offset="100%" style="stop-color: oklch(0.7 0.14 255)"/>
+      </linearGradient>
+      <linearGradient id="g-ring" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" style="stop-color: oklch(0.9 0.03 240)"/><stop offset="100%" style="stop-color: oklch(0.55 0.04 240)"/>
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <div class="star-field"></div>
+  <div class="halo"></div>
+  <div class="arc">
+    <svg viewBox="0 0 2000 900" fill="none" aria-hidden="true">
+      <defs>
+        <radialGradient id="arcGlow" cx="50%" cy="0%" r="60%">
+          <stop offset="0%" style="stop-color: oklch(0.92 0.01 250)" stop-opacity="0.18"/><stop offset="40%" style="stop-color: oklch(0.7 0.01 250)" stop-opacity="0.06"/><stop offset="100%" style="stop-color: oklch(0.4 0.01 250)" stop-opacity="0"/>
+        </radialGradient>
+        <linearGradient id="arcLine" x1="0%" y1="50%" x2="100%" y2="50%">
+          <stop offset="0%" style="stop-color: oklch(0.9 0.01 250)" stop-opacity="0"/><stop offset="20%" style="stop-color: oklch(0.9 0.01 250)" stop-opacity="0.35"/>
+          <stop offset="50%" style="stop-color: oklch(0.95 0.01 250)" stop-opacity="0.7"/><stop offset="80%" style="stop-color: oklch(0.9 0.01 250)" stop-opacity="0.35"/>
+          <stop offset="100%" style="stop-color: oklch(0.9 0.01 250)" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <ellipse cx="1000" cy="900" rx="1100" ry="850" fill="url(#arcGlow)"/>
+      <path d="M -50 820 Q 1000 200 2050 820" stroke="url(#arcLine)" stroke-width="1"/>
+      <path d="M -50 880 Q 1000 280 2050 880" stroke="url(#arcLine)" stroke-width="0.5" opacity="0.4"/>
+    </svg>
+  </div>
+
+  <header>
+    <div class="brand">
+      <span id="brand-mark" aria-hidden="true"></span>
+      <h1>Roundtable <span class="gem">Gem</span></h1>
+    </div>
+    <span class="pill" id="status" data-s="idle" role="status"><i></i><span id="status-text">Idle</span></span>
+  </header>
+
+  <div class="sub">
+    <span class="label">Managed-agent run</span>
+    <p>Antigravity agent · Interactions API · plan, delegate, fail, reroute, recover</p>
+  </div>
+
   <main>
-    <h1>roundtable-gem</h1>
-    <p>Placeholder. The failure &rarr; reroute &rarr; success timeline lands here once the orchestrator streams events from <code>/stream/{run_id}</code>.</p>
+    <aside class="panel">
+      <div>
+        <h2 class="label">Run</h2>
+        <div class="inset stack">
+          <p class="task" id="task">Select a run to replay.</p>
+          <div class="kv"><span>Category</span><b id="category">—</b></div>
+          <div class="kv"><span>Run</span><b class="mono" id="run-id">—</b></div>
+        </div>
+      </div>
+
+      <div>
+        <h2 class="label">Agents</h2>
+        <div class="stack" id="agent-rows"></div>
+      </div>
+
+      <div>
+        <h2 class="label">Progress</h2>
+        <div class="stack">
+          <div class="kv"><span>Steps passed</span><b id="st-steps">0</b></div>
+          <div class="kv"><span>Attempts</span><b id="st-attempts">0</b></div>
+          <div class="kv"><span>Recoveries</span><b id="st-recov">0</b></div>
+          <div class="kv"><span>Tokens</span><b id="st-tokens">0</b></div>
+        </div>
+      </div>
+
+      <div>
+        <h2 class="label">Replay</h2>
+        <div class="controls">
+          <select id="run-select" aria-label="Recorded run"></select>
+          <div class="row2">
+            <select id="speed" aria-label="Replay speed">
+              <option value="1">1× speed</option>
+              <option value="2" selected>2× speed</option>
+              <option value="4">4× speed</option>
+              <option value="0">Instant</option>
+            </select>
+            <button class="btn primary" id="replay" type="button">Replay ▶</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="col">
+      <div class="banner" id="fixture-banner" role="note">FIXTURE · synthetic sample data for building the UI, not a real run.</div>
+
+      <div class="panel">
+        <div class="stage-head">
+          <h2>Orchestration</h2>
+          <div class="legend">
+            <span style="--c: var(--info)">delegate</span>
+            <span style="--c: var(--ok)">verdict pass</span>
+            <span style="--c: var(--bad)">verdict fail</span>
+            <span style="--c: var(--warn)">reroute</span>
+          </div>
+        </div>
+        <div class="recoveries" id="recoveries" aria-live="polite"></div>
+        <div class="graph" id="graph">
+          <svg class="edges" viewBox="0 0 1000 400" preserveAspectRatio="none" aria-hidden="true">
+            <g class="conn" id="e-delegate"><path class="base" d="M 470 112 C 400 190, 260 190, 215 252"/><path class="flow" d="M 470 112 C 400 190, 260 190, 215 252"/></g>
+            <g class="conn" id="e-submit"><path class="base" d="M 260 290 C 400 335, 600 335, 740 290"/><path class="flow" d="M 260 290 C 400 335, 600 335, 740 290"/></g>
+            <g class="conn" id="e-verdict"><path class="base" d="M 785 252 C 740 190, 600 190, 530 112"/><path class="flow" d="M 785 252 C 740 190, 600 190, 530 112"/></g>
+          </svg>
+          <div class="node" id="n-orchestrator" data-state="idle" style="left: 50%; top: 22%;">
+            <div class="lift"><div class="disc"></div></div>
+            <div class="role">Orchestrator</div>
+            <div class="chip mono"><span data-model>antigravity-preview-09-2026</span></div>
+            <div class="note" data-note></div>
+          </div>
+          <div class="node" id="n-coder" data-state="idle" style="left: 20%; top: 72%;">
+            <div class="lift"><div class="disc"></div></div>
+            <div class="role">Coder</div>
+            <div class="chip mono"><span data-model>—</span></div>
+            <div class="note" data-note></div>
+          </div>
+          <div class="node" id="n-critic" data-state="idle" style="left: 80%; top: 72%;">
+            <div class="lift"><div class="disc"></div></div>
+            <div class="role">Critic</div>
+            <div class="chip mono"><span data-model>—</span></div>
+            <div class="note" data-note></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="tl-head">
+          <h2>State log</h2>
+          <div class="stats"><span><b id="ev-count">0</b> events</span><span>click a row for its full payload</span></div>
+        </div>
+        <ol class="log" id="log" aria-label="State log"></ol>
+      </div>
+    </section>
   </main>
+
+  <script>
+  (() => {
+    "use strict";
+
+    /* ---------- marks: static SVG, never built from event data ---------- */
+    const DISC = '<circle cx="16" cy="16" r="15" fill="oklch(0.22 0.01 250)" stroke="oklch(0.4 0.015 250)"/>';
+    const MARK = {
+      roundtable: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="url(#g-ring)" stroke-width="1.6"/><circle cx="12" cy="3" r="1.2" fill="oklch(0.95 0.02 240)"/><circle cx="12" cy="21" r="1" fill="oklch(0.8 0.03 240)" opacity=".7"/><circle cx="3" cy="12" r="1" fill="oklch(0.8 0.03 240)" opacity=".7"/><circle cx="21" cy="12" r="1" fill="oklch(0.8 0.03 240)" opacity=".7"/></svg>',
+      gemini: '<svg viewBox="0 0 32 32" fill="none">' + DISC + '<path d="M16 5 C 16.6 10.5 21.5 15.4 27 16 C 21.5 16.6 16.6 21.5 16 27 C 15.4 21.5 10.5 16.6 5 16 C 10.5 15.4 15.4 10.5 16 5 Z" fill="url(#g-gemini)"/></svg>',
+      // Original glyph (not a vendor logo): an apex lifting off a floating dot.
+      antigravity: '<svg viewBox="0 0 32 32" fill="none">' + DISC + '<path d="M9.5 18.5 L16 8 L22.5 18.5" stroke="url(#g-agy)" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16" cy="23" r="1.9" fill="url(#g-agy)"/></svg>',
+      // Shown only when an event carries a gemma-* model id.
+      gemma: '<svg viewBox="0 0 32 32" fill="none">' + DISC + '<path d="M10.5 12.5 L13.5 8 H18.5 L21.5 12.5 L16 24 Z" fill="url(#g-gemma)"/><path d="M10.5 12.5 H21.5 M13.5 8 L16 12.5 L18.5 8 M16 12.5 V24" stroke="oklch(0.14 0.01 250 / .55)" stroke-width=".8" fill="none"/></svg>',
+      star: '<svg viewBox="0 0 32 32" fill="none">' + DISC + '<path d="M16 6 L18 14 L26 16 L18 18 L16 26 L14 18 L6 16 L14 14 Z" fill="oklch(0.92 0.005 250)"/></svg>',
+    };
+    function markFor(role, model) {
+      const m = String(model || "").toLowerCase();
+      if (m.startsWith("gemma")) return MARK.gemma;
+      if (m.startsWith("gemini")) return MARK.gemini;
+      return role === "orchestrator" ? MARK.antigravity : MARK.star;
+    }
+
+    /* ---------- tiny DOM helpers ---------- */
+    const $ = (sel, root = document) => root.querySelector(sel);
+    const DEFAULT_ORCH_MODEL = "antigravity-preview-09-2026";
+    function h(tag, cls, text) {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text !== undefined && text !== null) n.textContent = String(text);
+      return n;
+    }
+    const clip = (s, n) => { s = String(s == null ? "" : s).replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+
+    /* ---------- static chrome ---------- */
+    $("#brand-mark").innerHTML = MARK.roundtable;
+    const ROLES = ["orchestrator", "coder", "critic"];
+    const ROLE_LABEL = { orchestrator: "Orchestrator", coder: "Coder", critic: "Critic" };
+    for (const role of ROLES) {
+      const row = h("div", "agent-row"); row.id = "a-" + role; row.dataset.state = "idle";
+      const mk = h("span", "mk"); mk.dataset.mk = "";
+      const who = h("span", "who"); who.append(h("span", "", ROLE_LABEL[role]), h("small", "mono", role === "orchestrator" ? DEFAULT_ORCH_MODEL : "—"));
+      row.append(mk, who, h("i", "dot"));
+      $("#agent-rows").append(row);
+    }
+    resetNodes(); // marks render even before a run is loaded
+
+    /* ---------- node / agent state ---------- */
+    function setNode(role, state, opts = {}) {
+      const node = $("#n-" + role), row = $("#a-" + role);
+      if (!node) return;
+      if (state) { node.dataset.state = state; row.dataset.state = state; }
+      if (opts.model !== undefined) {
+        const label = opts.model || (role === "orchestrator" ? DEFAULT_ORCH_MODEL : "—");
+        $("[data-model]", node).textContent = label;
+        $("small", row).textContent = label;
+        const svg = markFor(role, opts.model || (role === "orchestrator" ? "" : "gemini"));
+        $(".disc", node).innerHTML = svg; $("[data-mk]", row).innerHTML = svg;
+      }
+      if (opts.note !== undefined) {
+        const note = $("[data-note]", node);
+        note.textContent = opts.note; note.className = "note" + (opts.tone ? " " + opts.tone : "");
+      }
+    }
+    function resetNodes() {
+      for (const role of ROLES) {
+        setNode(role, "idle", { model: role === "orchestrator" ? "" : "gemini", note: "" });
+        if (role !== "orchestrator") { $("[data-model]", $("#n-" + role)).textContent = "—"; $("small", $("#a-" + role)).textContent = "—"; }
+      }
+    }
+    function pulse(id, color) {
+      const g = $("#" + id); if (!g) return;
+      g.style.setProperty("--c", color); g.classList.add("hot");
+      clearTimeout(g._t); g._t = setTimeout(() => g.classList.remove("hot"), 1400);
+    }
+
+    /* ---------- event presentation ---------- */
+    const KIND = {
+      run_started: ["run", "var(--muted)"], step_started: ["step", "var(--muted)"],
+      agent_call: ["call", "var(--info)"], agent_result: ["result", "var(--info)"],
+      tool_called: ["tool ▸", "var(--muted)"], tool_returned: ["tool ◂", "var(--muted)"],
+      verdict: ["verdict", "var(--ok)"], reflection: ["reflect", "var(--g2)"], reroute: ["reroute", "var(--warn)"],
+      step_succeeded: ["step ✓", "var(--ok)"], step_failed: ["step ✗", "var(--bad)"], run_finished: ["finished", "var(--fg)"],
+    };
+    function summarize(e) {
+      const p = e.payload || {};
+      switch (e.kind) {
+        case "run_started": return clip(p.task, 160);
+        case "step_started": return clip(p.title, 160);
+        case "agent_call": return clip(p.prompt, 180);
+        case "agent_result": return [p.status, p.tokens != null ? p.tokens + " tok" : "", clip(p.output, 140)].filter(Boolean).join(" · ");
+        case "tool_called": return p.tool + "(" + clip(JSON.stringify(p.arguments || {}), 120) + ")";
+        case "tool_returned": return p.tool + " → " + clip(p.result, 120);
+        case "verdict": return p.passed ? "PASS" : "FAIL · " + clip((p.reasons || []).join("; "), 160);
+        case "reflection": return clip(p.summary, 200);
+        case "reroute": return (p.from_model || "?") + " → " + (p.to_model || "?") + " · " + clip(p.modified_subtask, 150);
+        case "step_succeeded": return "passed on attempt " + (p.attempts != null ? p.attempts : e.attempt);
+        case "step_failed": return clip(p.reason, 160);
+        case "run_finished": return (p.succeeded ? "Run succeeded" : "Run failed") + " · " + (p.steps_succeeded != null ? p.steps_succeeded + "/" + p.steps_total + " steps" : "");
+        default: return clip(JSON.stringify(p), 160);
+      }
+    }
+    function eventRow(e, t0) {
+      const p = e.payload || {};
+      const [label, color] = KIND[e.kind] || [e.kind, "var(--muted)"];
+      const li = h("li", "ev"); li.tabIndex = 0; li.setAttribute("role", "button"); li.setAttribute("aria-expanded", "false");
+      if (e.kind === "verdict") li.classList.add(p.passed ? "pass" : "fail");
+      if (e.kind === "reroute") li.classList.add("reroute");
+      if (e.kind === "step_failed") li.classList.add("fail");
+      if (e.kind === "step_succeeded") li.classList.add("pass");
+      const badge = h("span", "badge", label);
+      badge.style.setProperty("--c", e.kind === "verdict" && !p.passed ? "var(--bad)" : color);
+      const body = h("span", "body");
+      if (e.agent) {
+        const who = h("span", "who"); const mk = h("span"); mk.innerHTML = markFor(e.agent, e.model);
+        who.append(mk, document.createTextNode(e.agent + (e.model ? " · " + e.model : ""))); body.append(who);
+      }
+      if (e.attempt > 1) body.append(h("span", "att", "attempt " + e.attempt));
+      body.append(h("span", "sum", summarize(e)));
+      const pre = h("pre", "mono", JSON.stringify(e.payload || {}, null, 2));
+      li.append(h("span", "seq", e.seq), h("span", "t", "+" + Math.max(0, e.ts - t0).toFixed(1) + "s"), badge, body, pre);
+      const toggle = () => { const open = li.classList.toggle("open"); li.setAttribute("aria-expanded", String(open)); };
+      li.addEventListener("click", toggle);
+      li.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); } });
+      return li;
+    }
+
+    /* ---------- session state + reducer ---------- */
+    let es = null, S = null;
+    function newSession(runId, mode) {
+      S = { runId, mode, t0: null, steps: new Map(), recoveries: 0, tokens: 0, attempts: 0, stepsOk: 0, stepsTotal: 0, finished: false, count: 0 };
+      $("#log").textContent = ""; $("#recoveries").textContent = "";
+      $("#fixture-banner").classList.remove("show");
+      $("#run-id").textContent = runId; $("#task").textContent = "…"; $("#category").textContent = "—";
+      resetNodes(); renderStats(); setStatus(mode, mode === "live" ? "Live" : "Replaying");
+    }
+    function renderStats() {
+      $("#st-steps").textContent = S.stepsOk + (S.stepsTotal ? " / " + S.stepsTotal : "");
+      $("#st-attempts").textContent = S.attempts; $("#st-recov").textContent = S.recoveries;
+      $("#st-tokens").textContent = S.tokens.toLocaleString(); $("#ev-count").textContent = S.count;
+    }
+    function setStatus(s, text) { const p = $("#status"); p.dataset.s = s; $("#status-text").textContent = text; }
+    function stepRec(n) { if (!S.steps.has(n)) S.steps.set(n, { n, title: "", tries: [] }); return S.steps.get(n); }
+
+    function addRecovery(rec, attempts) {
+      const failed = rec.tries.find((t) => !t.passed), passed = rec.tries[rec.tries.length - 1];
+      const box = h("div", "recovery"); box.append(h("b", "", "Step " + rec.n + " recovered"));
+      const s1 = h("span", "", "failed on "), c1 = h("code", "bad", failed && failed.model || "?"); s1.append(c1);
+      const arrow = h("span", "arrow", "→ rerouted →");
+      const s2 = h("span", "", "passed on "), c2 = h("code", "good", passed && passed.model || "?"); s2.append(c2);
+      box.append(s1, arrow, s2, h("span", "", "(attempt " + attempts + ")"));
+      $("#recoveries").append(box); S.recoveries++;
+    }
+
+    function apply(e) {
+      if (!S) return;
+      const p = e.payload || {}; S.count++;
+      if (S.t0 === null) S.t0 = e.ts;
+      const log = $("#log"), stick = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+
+      if (e.kind === "step_started") {
+        const head = h("li", "step-head"); head.append(h("b", "", "Step " + e.step), document.createTextNode(" · " + (p.title || "")));
+        log.append(head); stepRec(e.step).title = p.title || ""; S.stepsTotal = Math.max(S.stepsTotal, e.step);
+      }
+      log.append(eventRow(e, S.t0));
+      if (stick) log.scrollTop = log.scrollHeight;
+
+      switch (e.kind) {
+        case "run_started":
+          $("#task").textContent = p.task || "—"; $("#category").textContent = p.category || "—";
+          if (p.fixture) $("#fixture-banner").classList.add("show");
+          setNode("orchestrator", "working", { model: e.model || "", note: "planning" }); break;
+        case "step_started":
+          setNode("orchestrator", "working", { note: "step " + e.step + ": " + clip(p.title, 48) });
+          setNode("coder", "idle", { note: "" }); setNode("critic", "idle", { note: "" }); break;
+        case "agent_call": {
+          const role = e.agent || "coder"; S.attempts++;
+          setNode(role, "working", { model: e.model, note: "attempt " + (e.attempt || 1) });
+          if (role === "coder") { setNode("critic", "idle", { note: "" }); pulse("e-delegate", "var(--info)"); }
+          if (role === "critic") pulse("e-submit", "var(--info)");
+          break; }
+        case "agent_result": {
+          const role = e.agent || "coder"; if (p.tokens) S.tokens += Number(p.tokens) || 0;
+          const bad = p.status && p.status !== "completed";
+          setNode(role, bad ? "fail" : "idle", { note: bad ? String(p.status) : "done", tone: bad ? "bad" : "" }); break; }
+        case "tool_called": setNode(e.agent || "critic", "working", { note: String(p.tool || "tool") + "…" }); break;
+        case "verdict": {
+          stepRec(e.step).tries.push({ attempt: e.attempt, model: e.model, passed: !!p.passed });
+          setNode("critic", p.passed ? "pass" : "fail", { note: p.passed ? "pass" : (p.failing_tests || []).length + " failing", tone: p.passed ? "good" : "bad" });
+          pulse("e-verdict", p.passed ? "var(--ok)" : "var(--bad)"); break; }
+        case "reflection": setNode("orchestrator", "working", { note: "reflecting on failure" }); break;
+        case "reroute":
+          setNode("orchestrator", "working", { note: "rerouting" });
+          setNode("coder", "idle", { model: p.to_model, note: "↻ rerouted", tone: "warn" });
+          pulse("e-delegate", "var(--warn)"); break;
+        case "step_succeeded": {
+          S.stepsOk++;
+          const rec = stepRec(e.step), attempts = p.attempts != null ? p.attempts : rec.tries.length;
+          if (rec.tries.some((t) => !t.passed)) addRecovery(rec, attempts);
+          setNode("orchestrator", "pass", { note: "step " + e.step + " passed", tone: "good" }); break; }
+        case "step_failed": setNode("orchestrator", "fail", { note: "step " + e.step + " failed", tone: "bad" }); break;
+        case "run_finished": {
+          S.finished = true;
+          if (p.steps_total != null) S.stepsTotal = p.steps_total;
+          setNode("orchestrator", p.succeeded ? "pass" : "fail", { note: p.succeeded ? "run succeeded" : "run failed", tone: p.succeeded ? "good" : "bad" });
+          setNode("coder", "idle"); setNode("critic", "idle");
+          setStatus(p.succeeded ? "ok" : "bad", p.succeeded ? "Run succeeded" : "Run failed"); break; }
+        default: break;
+      }
+      renderStats();
+    }
+
+    /* ---------- transport (one path for live and replay) ---------- */
+    function closeStream() { if (es) { es.close(); es = null; } }
+    function connect(runId, { pace = false, speed = 1, live = false } = {}) {
+      closeStream(); newSession(runId, live ? "live" : "replay");
+      const qs = new URLSearchParams(); if (pace) { qs.set("pace", "1"); qs.set("speed", String(speed)); }
+      const q = qs.toString();
+      es = new EventSource("/stream/" + encodeURIComponent(runId) + (q ? "?" + q : ""));
+      es.onmessage = (m) => {
+        let e; try { e = JSON.parse(m.data); } catch (_) { return; }
+        apply(e);
+        if (e.kind === "run_finished") closeStream(); // else EventSource would auto-reconnect forever
+      };
+      es.onerror = () => {
+        if (S && !S.finished) setStatus("err", es && es.readyState === EventSource.CONNECTING ? "Reconnecting…" : "Disconnected");
+      };
+    }
+
+    async function loadRuns() {
+      const sel = $("#run-select"); sel.textContent = "";
+      let runs = [];
+      try { const r = await fetch("/runs"); if (!r.ok) throw new Error(r.status); runs = await r.json(); }
+      catch (_) { $("#log").replaceChildren(h("li", "step-head", "Can't reach the server. Start it with: uvicorn app.server:app")); setStatus("err", "Server offline"); return runs; }
+      for (const r of runs) {
+        const mark = r.finished ? (r.succeeded ? " ✓" : " ✗") : " …";
+        const opt = h("option", "", (r.fixture ? "[fixture] " : "") + r.run_id + mark); opt.value = r.run_id; sel.append(opt);
+      }
+      if (!runs.length) sel.append(h("option", "", "no recorded runs"));
+      return runs;
+    }
+    function play() {
+      const id = $("#run-select").value; if (!id) return;
+      const speed = Number($("#speed").value);
+      connect(id, { pace: speed > 0, speed: speed || 1 });
+    }
+    $("#replay").addEventListener("click", play);
+    $("#run-select").addEventListener("change", play);
+    window.addEventListener("pagehide", closeStream);
+
+    (async () => {
+      const params = new URLSearchParams(location.search);
+      const runs = await loadRuns();
+      const live = params.get("live");
+      if (live) { connect(live, { live: true }); return; }
+      const want = params.get("run");
+      if (want && runs.some((r) => r.run_id === want)) $("#run-select").value = want;
+      if (runs.length) play();
+    })();
+  })();
+  </script>
 </body>
 </html>

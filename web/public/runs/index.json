@@ -1,0 +1,18 @@
+[
+  {
+    "id": "recorded_20260926-125658-c8179b",
+    "task": "inventory_report.py crashes when run on sample_stock.csv. Fix it so it runs on that file and behaves as described in SPEC.md.",
+    "fixture": false,
+    "durationS": 919.2,
+    "succeeded": true,
+    "tokens": 214025
+  },
+  {
+    "id": "recorded_20260926-124221-2e0b7b",
+    "task": "inventory_report.py crashes when run on sample_stock.csv. Fix it so it runs on that file and behaves as described in SPEC.md.",
+    "fixture": false,
+    "durationS": 1222.9,
+    "succeeded": true,
+    "tokens": 277027
+  }
+]

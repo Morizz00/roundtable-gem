@@ -74,8 +74,10 @@ def pick(
 def history_from_runs(runs_dir: Optional[Path] = None) -> Dict[str, Dict[str, Tuple[float, int]]]:
     """Tally critic verdicts in recorded runs into per-(category, model) win rates.
 
-    A `verdict` event counts when it carries a model and payload["category"] +
-    payload["passed"]. Malformed lines are skipped, never raised on.
+    The model credited is the one being JUDGED: payload["subject_model"] (the coder's), falling back to the
+    event's own model for older logs where the judge and the judged were the same. A verdict counts when it
+    has a model plus payload["category"] and payload["passed"]. Runs marked fixture=true in run_started are
+    synthetic and never count. Malformed lines are skipped, never raised on.
     """
     directory = Path(runs_dir) if runs_dir else RUNS_DIR
     tally: Dict[str, Dict[str, list]] = {}
@@ -85,15 +87,21 @@ def history_from_runs(runs_dir: Optional[Path] = None) -> Dict[str, Dict[str, Tu
         except OSError as e:
             logger.warning("routing: could not read %s: %s", path, e)
             continue
+        events = []
         for line in lines:
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if not isinstance(event, dict) or event.get("kind") != "verdict":
+            if isinstance(event, dict):
+                events.append(event)
+        if any(e.get("kind") == "run_started" and (e.get("payload") or {}).get("fixture") for e in events):
+            continue  # synthetic data must never steer real routing decisions
+        for event in events:
+            if event.get("kind") != "verdict":
                 continue
             payload = event.get("payload") or {}
-            model, category = event.get("model"), payload.get("category")
+            model, category = payload.get("subject_model") or event.get("model"), payload.get("category")
             if not model or not category or "passed" not in payload:
                 continue
             wins_and_total = tally.setdefault(category, {}).setdefault(model, [0, 0])
